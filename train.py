@@ -334,12 +334,25 @@ def main(args):
         class_counts = np.bincount(filtered_labels, minlength=NUM_CLASSES)
         class_counts[class_counts == 0] = 1  # hindari div by zero
         print(f"Class distribution: {dict(zip(CLASSES[1:], class_counts[1:]))}")
-    
-        # Bobot = 1 / frekuensi kelas (inverse frequency weighting)
-        class_weights = 1.0 / class_counts
+        
+        # Calculate class weights with stronger emphasis on minority classes
+        # Use sqrt to reduce extreme weights while still prioritizing minority classes
+        total_samples = len(filtered_labels)
+        class_weights = np.sqrt(total_samples / (NUM_CLASSES * class_counts))
+        # Boost smoke class even more (typically the rarest)
+        if NUM_CLASSES >= 3:  # If we have fire, smoke, other
+            smoke_idx = CLASSES.index('smoke') if 'smoke' in CLASSES else -1
+            if smoke_idx > 0:  # smoke is not background
+                smoke_class_idx = smoke_idx - 1  # Adjust for background
+                if smoke_class_idx < len(class_weights):
+                    # Boost smoke by 2x to handle extreme imbalance
+                    class_weights[smoke_class_idx] *= 2.0
+        
         # Normalize weights
         class_weights = class_weights / class_weights.sum() * len(class_weights)
         sample_weights = class_weights[filtered_labels]
+        
+        print(f"Class sampling weights: {dict(zip(CLASSES[1:], class_weights))}")
     
         # Sampler
         train_sampler = WeightedRandomSampler(
@@ -472,24 +485,29 @@ def main(args):
     if args['optimizer'] == 'AdamW':
         if use_differential_lr:
             # Use lower LR for backbone (fine-tuning), higher for head
+            # According to ACUAN.md: backbone 1e-5, head 1e-4 to 2e-4 for better learning
+            backbone_lr = args['lr'] * 0.1  # 1e-5 if lr=1e-4
+            head_lr = args['lr'] * 2.0  # 2e-4 if lr=1e-4 (increased for better convergence)
             param_groups = [
-                {'params': backbone_params, 'lr': args['lr'] * 0.1, 'weight_decay': 1e-4},
-                {'params': head_params, 'lr': args['lr'], 'weight_decay': 1e-4}
+                {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
+                {'params': head_params, 'lr': head_lr, 'weight_decay': 1e-4}
             ]
             optimizer = torch.optim.AdamW(param_groups)
-            print(f"Using AdamW for {args['model']} with differential LR (backbone: {args['lr'] * 0.1}, head: {args['lr']})")
+            print(f"Using AdamW for {args['model']} with differential LR (backbone: {backbone_lr:.6f}, head: {head_lr:.6f})")
         else:
             params = [p for p in model.parameters() if p.requires_grad]
             optimizer = torch.optim.AdamW(params, lr=args['lr'], weight_decay=1e-4)
             print(f"Using AdamW for {args['model']} with uniform LR: {args['lr']}")
     elif args['optimizer'] == 'SGD':
         if use_differential_lr:
+            backbone_lr = args['lr'] * 0.1
+            head_lr = args['lr'] * 2.0
             param_groups = [
-                {'params': backbone_params, 'lr': args['lr'] * 0.1, 'weight_decay': 1e-4},
-                {'params': head_params, 'lr': args['lr'], 'weight_decay': 1e-4}
+                {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
+                {'params': head_params, 'lr': head_lr, 'weight_decay': 1e-4}
             ]
             optimizer = torch.optim.SGD(param_groups, momentum=0.9, nesterov=True)
-            print(f"Using SGD for {args['model']} with differential LR (backbone: {args['lr'] * 0.1}, head: {args['lr']})")
+            print(f"Using SGD for {args['model']} with differential LR (backbone: {backbone_lr:.6f}, head: {head_lr:.6f})")
         else:
             params = [p for p in model.parameters() if p.requires_grad]
             optimizer = torch.optim.SGD(params, lr=args['lr'], momentum=0.9, nesterov=True)
@@ -537,11 +555,11 @@ def main(args):
             verbose=False
         )
     else:
-        # Use StepLR as default for better fine-tuning control
-        # Reduce LR by factor of 0.5 every 15 epochs
-        scheduler = torch.optim.lr_scheduler.StepLR(
+        # Use MultiStepLR for better control - reduce at milestones
+        # Reduce LR at epoch 20, 35, 45 for gradual learning
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
             optimizer,
-            step_size=15,
+            milestones=[20, 35, 45],
             gamma=0.5,
             verbose=False
         )
