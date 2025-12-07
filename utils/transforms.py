@@ -70,11 +70,8 @@ def get_train_aug():
             gamma_limit=(80, 130),  # Increased range from (85, 120)
             p=0.30  # Increased from 0.25
         ),
-        A.CLAHE(
-            clip_limit=2.0,
-            tile_grid_size=(8, 8),
-            p=0.25  # Added for better contrast
-        ),
+        # CLAHE removed - requires uint8 input but image is normalized float
+        # Using RandomBrightnessContrast and ColorJitter instead for contrast enhancement
         A.RandomShadow(
             shadow_roi=(0, 0.5, 1, 1),
             num_shadows_lower=1,
