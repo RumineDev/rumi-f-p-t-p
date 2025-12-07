@@ -1,0 +1,27 @@
+# Local Training Configuration for Fire Detection
+# Update paths to match your local dataset location
+
+# Images and labels directory should be relative to train.py or use absolute paths
+TRAIN_DIR_IMAGES: 'data3/train'
+TRAIN_DIR_LABELS: 'data3/train'
+
+VALID_DIR_IMAGES: 'data3/valid'
+VALID_DIR_LABELS: 'data3/valid'
+
+TEST_DIR_IMAGES: 'data3/test'
+TEST_DIR_LABELS: 'data3/test'
+
+# Class names.
+CLASSES: [
+  '__background__',
+  'fire',
+  'smoke',
+  'other'
+]
+
+# Number of classes (object classes + 1 for background class in Faster RCNN).
+NC: 4
+
+# Whether to save the predictions of the validation set while training.
+SAVE_VALID_PREDICTION_IMAGES: True
+
