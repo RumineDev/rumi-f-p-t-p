@@ -96,26 +96,14 @@ def parse_opt():
     parser.add_argument(
         '--lr', 
         default=0.001,
-        help='learning rate for the optimizer (base LR for head)',
+        help='learning rate for the optimizer',
         type=float
     )
     parser.add_argument(
-        '--backbone-lr-multiplier',
-        default=0.1,
-        type=float,
-        help='multiplier for backbone learning rate (backbone_lr = lr * multiplier). Default 0.1. For better convergence, try 0.5 or 1.0'
-    )
-    parser.add_argument(
-        '--head-lr-multiplier',
-        default=1.0,
-        type=float,
-        help='multiplier for head learning rate (head_lr = lr * multiplier). Default 1.0. For faster learning, try 5.0'
-    )
-    parser.add_argument(
         '-ims', '--imgsz',
-        default=800, 
+        default=640, 
         type=int, 
-        help='image size to feed to the network (recommended: 800 for better detection)'
+        help='image size to feed to the network'
     )
     parser.add_argument(
         '-n', '--name', 
@@ -235,18 +223,6 @@ def parse_opt():
         default=None,
         choices=['SGD', 'AdamW']
     )
-    parser.add_argument(
-        '--class-weights',
-        dest='use_class_weights',
-        action='store_true',
-        help='use class weights in loss to handle class imbalance (recommended for fire/smoke detection)'
-    )
-    parser.add_argument(
-        '--focal-loss',
-        dest='use_focal_loss',
-        action='store_true',
-        help='use focal loss instead of standard cross entropy (helps with class imbalance)'
-    )
 
     args = vars(parser.parse_args())
     return args
@@ -353,28 +329,17 @@ def main(args):
         # Buang -1 (gambar tanpa bbox)
         valid_idx = labels != -1
         filtered_labels = labels[valid_idx]
-        filtered_indices = np.where(valid_idx)[0]
     
         # Hitung jumlah kelas
         class_counts = np.bincount(filtered_labels, minlength=NUM_CLASSES)
         class_counts[class_counts == 0] = 1  # hindari div by zero
         print(f"Class distribution: {dict(zip(CLASSES[1:], class_counts[1:]))}")
-        
-        # Improved class weighting: give more weight to minority classes (fire/smoke)
-        # Use sqrt of inverse frequency for more balanced weighting
-        class_weights = np.sqrt(1.0 / class_counts)
-        # Boost fire and smoke classes (indices 1 and 2) more aggressively
-        if NUM_CLASSES >= 3:
-            # Fire (index 1) and Smoke (index 2) get 2x boost
-            class_weights[1] = class_weights[1] * 2.0  # fire
-            if NUM_CLASSES >= 3:
-                class_weights[2] = class_weights[2] * 2.0  # smoke
-        
+    
+        # Bobot = 1 / frekuensi kelas (inverse frequency weighting)
+        class_weights = 1.0 / class_counts
         # Normalize weights
         class_weights = class_weights / class_weights.sum() * len(class_weights)
         sample_weights = class_weights[filtered_labels]
-        
-        print(f"Class weights (normalized): {dict(zip(CLASSES[1:], class_weights[1:]))}")
     
         # Sampler
         train_sampler = WeightedRandomSampler(
@@ -506,29 +471,25 @@ def main(args):
     
     if args['optimizer'] == 'AdamW':
         if use_differential_lr:
-            # Use configurable LR multipliers for backbone and head
-            backbone_lr = args['lr'] * args['backbone_lr_multiplier']
-            head_lr = args['lr'] * args['head_lr_multiplier']
+            # Use lower LR for backbone (fine-tuning), higher for head
             param_groups = [
-                {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
-                {'params': head_params, 'lr': head_lr, 'weight_decay': 1e-4}
+                {'params': backbone_params, 'lr': args['lr'] * 0.1, 'weight_decay': 1e-4},
+                {'params': head_params, 'lr': args['lr'], 'weight_decay': 1e-4}
             ]
             optimizer = torch.optim.AdamW(param_groups)
-            print(f"Using AdamW for {args['model']} with differential LR (backbone: {backbone_lr:.6f}, head: {head_lr:.6f})")
+            print(f"Using AdamW for {args['model']} with differential LR (backbone: {args['lr'] * 0.1}, head: {args['lr']})")
         else:
             params = [p for p in model.parameters() if p.requires_grad]
             optimizer = torch.optim.AdamW(params, lr=args['lr'], weight_decay=1e-4)
             print(f"Using AdamW for {args['model']} with uniform LR: {args['lr']}")
     elif args['optimizer'] == 'SGD':
         if use_differential_lr:
-            backbone_lr = args['lr'] * args['backbone_lr_multiplier']
-            head_lr = args['lr'] * args['head_lr_multiplier']
             param_groups = [
-                {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
-                {'params': head_params, 'lr': head_lr, 'weight_decay': 1e-4}
+                {'params': backbone_params, 'lr': args['lr'] * 0.1, 'weight_decay': 1e-4},
+                {'params': head_params, 'lr': args['lr'], 'weight_decay': 1e-4}
             ]
             optimizer = torch.optim.SGD(param_groups, momentum=0.9, nesterov=True)
-            print(f"Using SGD for {args['model']} with differential LR (backbone: {backbone_lr:.6f}, head: {head_lr:.6f})")
+            print(f"Using SGD for {args['model']} with differential LR (backbone: {args['lr'] * 0.1}, head: {args['lr']})")
         else:
             params = [p for p in model.parameters() if p.requires_grad]
             optimizer = torch.optim.SGD(params, lr=args['lr'], momentum=0.9, nesterov=True)
@@ -549,14 +510,12 @@ def main(args):
                 print(f"Using default AdamW for {args['model']} with uniform LR: {args['lr']}")
         else:
             if use_differential_lr:
-                backbone_lr = args['lr'] * args['backbone_lr_multiplier']
-                head_lr = args['lr'] * args['head_lr_multiplier']
                 param_groups = [
-                    {'params': backbone_params, 'lr': backbone_lr, 'weight_decay': 1e-4},
-                    {'params': head_params, 'lr': head_lr, 'weight_decay': 1e-4}
+                    {'params': backbone_params, 'lr': args['lr'] * 0.1, 'weight_decay': 1e-4},
+                    {'params': head_params, 'lr': args['lr'], 'weight_decay': 1e-4}
                 ]
                 optimizer = torch.optim.SGD(param_groups, momentum=0.9, nesterov=True)
-                print(f"Using default SGD for {args['model']} with differential LR (backbone: {backbone_lr:.6f}, head: {head_lr:.6f})")
+                print(f"Using default SGD for {args['model']} with differential LR")
             else:
                 params = [p for p in model.parameters() if p.requires_grad]
                 optimizer = torch.optim.SGD(params, lr=args['lr'], momentum=0.9, nesterov=True)
