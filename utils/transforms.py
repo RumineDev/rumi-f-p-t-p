@@ -66,7 +66,8 @@ def get_train_aug():
     ], bbox_params=A.BboxParams(
         format='pascal_voc',
         label_fields=['labels'],
-        min_visibility=0.20
+        min_visibility=0.2,
+        min_area=16           # (4x4 pixel)
     ))
 
 
