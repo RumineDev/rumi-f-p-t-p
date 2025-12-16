@@ -61,7 +61,7 @@ class CustomDataset(Dataset):
             root = tree.getroot()
         
             # ambil label pertama tiap gambar (atau semua jika mau)
-            # Diubah labels = [self.classes.index(obj.find('name').text) for obj in root.findall('object')]
+            #  Diubah
             labels = []
             for obj in root.findall('object'):
                 class_name = obj.find('name').text
