@@ -61,7 +61,12 @@ class CustomDataset(Dataset):
             root = tree.getroot()
         
             # ambil label pertama tiap gambar (atau semua jika mau)
-            labels = [self.classes.index(obj.find('name').text) for obj in root.findall('object')]
+            # Diubah labels = [self.classes.index(obj.find('name').text) for obj in root.findall('object')]
+            labels = []
+            for obj in root.findall('object'):
+                class_name = obj.find('name').text
+                if class_name in self.classes:
+                    labels.append(self.classes.index(class_name))
             if len(labels) > 0:
                 self.image_labels.append(labels[0])
             else:
