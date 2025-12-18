@@ -534,7 +534,7 @@ def main(args):
             optimizer, 
             T_0=steps,
             T_mult=1,
-            verbose=False
+            # verbose=False
         )
     else:
         # Use StepLR as default for better fine-tuning control
@@ -543,7 +543,7 @@ def main(args):
             optimizer,
             step_size=15,
             gamma=0.5,
-            verbose=False
+            # verbose=False
         )
 
     save_best_model = SaveBestModel()
