@@ -15,12 +15,19 @@ def resize(im, img_size=640, square=False):
             im = cv2.resize(im, (int(w0 * r), int(h0 * r)))
     return im
 
-# ULTIMATE FIX: Custom bbox params that DOESN'T validate
+# FIXED: Custom bbox params compatible with albumentations 1.3.1
 class SafeBboxParams(A.BboxParams):
-    """BboxParams that clips instead of validating"""
+    """BboxParams for albumentations 1.3.1 - no check_validity parameter"""
     def __init__(self, *args, **kwargs):
-        # Force check_validity to False
-        kwargs['check_validity'] = False
+        # Remove check_validity - not supported in BboxParams init in v1.3.1
+        kwargs.pop('check_validity', None)
+        
+        # Set permissive defaults to prevent filtering
+        if 'min_visibility' not in kwargs:
+            kwargs['min_visibility'] = 0.0  # Don't filter based on visibility
+        if 'min_area' not in kwargs:
+            kwargs['min_area'] = 0.0  # Don't filter based on area
+        
         super().__init__(*args, **kwargs)
 
 def clip_bboxes(bboxes, rows, cols):
@@ -100,7 +107,6 @@ def get_train_aug():
         label_fields=['labels'],
         min_visibility=0.1,  # Permissive
         min_area=1,          # Very permissive
-        check_validity=False # CRITICAL: NO VALIDATION!
     ))
 
 
@@ -111,7 +117,6 @@ def get_train_transform():
     ], bbox_params=SafeBboxParams(
         format='pascal_voc',
         label_fields=['labels'],
-        check_validity=False
     ))
 
 
@@ -147,7 +152,6 @@ def get_valid_transform():
     ], bbox_params=SafeBboxParams(
         format='pascal_voc',
         label_fields=['labels'],
-        check_validity=False
     ))
 
 
