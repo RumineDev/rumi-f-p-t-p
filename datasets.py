@@ -30,6 +30,7 @@ from utils.transforms import (
 )
 from tqdm.auto import tqdm
 
+
 class CustomDataset(Dataset):
     """
     Improved Custom Dataset for object detection
@@ -483,17 +484,10 @@ class CustomDataset(Dataset):
             result_boxes[:, [0, 2]] = torch.clamp(result_boxes[:, [0, 2]], 0, 2 * s)
             result_boxes[:, [1, 3]] = torch.clamp(result_boxes[:, [1, 3]], 0, 2 * s)
             
-            # Filter valid boxes with MINIMUM SIZE THRESHOLD
-            box_widths = result_boxes[:, 2] - result_boxes[:, 0]
-            box_heights = result_boxes[:, 3] - result_boxes[:, 1]
-            
-            # Require at least 10x10 pixels in mosaic space
-            min_size = 10
-            valid = (box_widths > min_size) & (box_heights > min_size)
-            
+            # Filter valid boxes
+            valid = (result_boxes[:, 2] > result_boxes[:, 0] + 1) & (result_boxes[:, 3] > result_boxes[:, 1] + 1)
             result_boxes = result_boxes[valid]
             result_classes = [result_classes[i] for i in range(len(result_classes)) if valid[i]]
-        
         
         # Resize mosaic to target size
         result_image, resized_boxes = transform_mosaic(result_image, result_boxes.numpy() if len(result_boxes) > 0 else [], self.img_size)
@@ -507,7 +501,7 @@ class CustomDataset(Dataset):
     
     def __getitem__(self, idx):
         """
-        Get item with robust augmentation handling and empty bbox protection
+        Get item with robust augmentation handling
         """
         # Load data
         if not self.train or random.random() >= self.mosaic:
@@ -526,24 +520,19 @@ class CustomDataset(Dataset):
             "image_id": torch.tensor([idx])
         }
         
-        # ═══════════════════════════════════════════════════════════════════
-        # CRITICAL FIX: Handle empty boxes BEFORE augmentation
-        # ═══════════════════════════════════════════════════════════════════
-        if boxes.numel() == 0 or len(boxes) == 0:
-            # Return image without augmentation, with properly formatted empty tensors
+        # Handle empty boxes
+        if boxes.numel() == 0:
             empty_aug = get_valid_transform()
             sample = empty_aug(image=image_resized, bboxes=[], labels=[])
             image_resized = sample['image']
             target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
-            target['labels'] = torch.zeros((0,), dtype=torch.int64)
-            target['area'] = torch.zeros((0,), dtype=torch.float32)
-            target['iscrowd'] = torch.zeros((0,), dtype=torch.int64)
+            target['labels'] = torch.zeros(0, dtype=torch.int64)
             return image_resized, target
         
         # Convert to lists for albumentations
         h, w = image_resized.shape[:2]
-        bboxes_list = boxes.cpu().numpy().tolist() if boxes.numel() > 0 else []
-        labels_list = labels.cpu().numpy().tolist() if labels.numel() > 0 else []
+        bboxes_list = boxes.cpu().numpy().tolist()
+        labels_list = labels.cpu().numpy().tolist()
         
         # Clip boxes to image bounds
         clipped_bboxes = []
@@ -557,17 +546,13 @@ class CustomDataset(Dataset):
                 clipped_bboxes.append(clipped)
                 clipped_labels.append(label)
         
-        # ═══════════════════════════════════════════════════════════════════
-        # CRITICAL FIX: Handle empty boxes AFTER clipping
-        # ═══════════════════════════════════════════════════════════════════
+        # Fallback if all boxes were filtered
         if not clipped_bboxes:
             empty_aug = get_valid_transform()
             sample = empty_aug(image=image_resized, bboxes=[], labels=[])
             image_resized = sample['image']
             target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
-            target['labels'] = torch.zeros((0,), dtype=torch.int64)
-            target['area'] = torch.zeros((0,), dtype=torch.float32)
-            target['iscrowd'] = torch.zeros((0,), dtype=torch.int64)
+            target['labels'] = torch.zeros(0, dtype=torch.int64)
             return image_resized, target
         
         # Apply augmentation
@@ -584,26 +569,10 @@ class CustomDataset(Dataset):
             fallback = get_valid_transform()
             sample = fallback(image=image_resized, bboxes=clipped_bboxes, labels=clipped_labels)
         
-        # ═══════════════════════════════════════════════════════════════════
-        # CRITICAL FIX: Handle empty boxes AFTER augmentation
-        # ═══════════════════════════════════════════════════════════════════
-        if not sample['bboxes'] or len(sample['bboxes']) == 0:
-            image_resized = sample['image']
-            target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
-            target['labels'] = torch.zeros((0,), dtype=torch.int64)
-            target['area'] = torch.zeros((0,), dtype=torch.float32)
-            target['iscrowd'] = torch.zeros((0,), dtype=torch.int64)
-            return image_resized, target
-        
         # Update target with augmented data
         image_resized = sample['image']
-        target['boxes'] = torch.as_tensor(sample['bboxes'], dtype=torch.float32)
-        target['labels'] = torch.as_tensor(sample['labels'], dtype=torch.int64)
-        
-        # Recalculate area and iscrowd for augmented boxes
-        boxes_tensor = target['boxes']
-        target['area'] = (boxes_tensor[:, 3] - boxes_tensor[:, 1]) * (boxes_tensor[:, 2] - boxes_tensor[:, 0])
-        target['iscrowd'] = torch.zeros((boxes_tensor.shape[0],), dtype=torch.int64)
+        target['boxes'] = torch.as_tensor(sample['bboxes'], dtype=torch.float32) if sample['bboxes'] else torch.zeros((0, 4), dtype=torch.float32)
+        target['labels'] = torch.as_tensor(sample['labels'], dtype=torch.int64) if sample['labels'] else torch.zeros(0, dtype=torch.int64)
         
         return image_resized, target
     

@@ -52,10 +52,7 @@ import os
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
-# Helper function for rank-based printing
-def print_rank0(*args, **kwargs):
-    """Print only from rank 0 in distributed training"""
-    print(*args, **kwargs)
+RANK = int(os.getenv('RANK', -1))
 
 # For same annotation colors each time.
 np.random.seed(42)
@@ -328,31 +325,26 @@ def main(args):
     else:
         # Ambil label per image
         labels = np.array(train_dataset.image_labels)
-
-        # Calculate class weights INCLUDING images without labels
-        # Assign -1 labels to a special category or distribute them
-        class_counts = np.bincount(labels[labels != -1], minlength=NUM_CLASSES)
-        class_counts[class_counts == 0] = 1
-
+    
+        # Buang -1 (gambar tanpa bbox)
+        valid_idx = labels != -1
+        filtered_labels = labels[valid_idx]
+    
+        # Hitung jumlah kelas
+        class_counts = np.bincount(filtered_labels, minlength=NUM_CLASSES)
+        class_counts[class_counts == 0] = 1  # hindari div by zero
         print(f"Class distribution: {dict(zip(CLASSES[1:], class_counts[1:]))}")
-
-        # Create weights for ALL samples (including those with -1)
+    
+        # Bobot = 1 / frekuensi kelas (inverse frequency weighting)
         class_weights = 1.0 / class_counts
+        # Normalize weights
         class_weights = class_weights / class_weights.sum() * len(class_weights)
-
-        # Map each image to its weight
-        sample_weights = np.zeros(len(labels))
-        for i, label in enumerate(labels):
-            if label != -1:
-                sample_weights[i] = class_weights[label]
-            else:
-                # Assign low weight to images without labels
-                sample_weights[i] = class_weights.min() * 0.1
-
-        # Now sampler matches dataset length
+        sample_weights = class_weights[filtered_labels]
+    
+        # Sampler
         train_sampler = WeightedRandomSampler(
             weights=sample_weights,
-            num_samples=len(train_dataset),  # Use full dataset length
+            num_samples=len(filtered_labels),
             replacement=True
         )
 
