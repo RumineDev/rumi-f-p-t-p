@@ -502,6 +502,8 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         """
         Get item with robust augmentation handling
+        
+        CRITICAL FIX: Filter out boxes with zero/negative dimensions
         """
         # Load data
         if not self.train or random.random() >= self.mosaic:
@@ -534,20 +536,32 @@ class CustomDataset(Dataset):
         bboxes_list = boxes.cpu().numpy().tolist()
         labels_list = labels.cpu().numpy().tolist()
         
-        # Clip boxes to image bounds
+        # ═══════════════════════════════════════════════════════════════════
+        # CRITICAL FIX: Clip AND validate boxes
+        # ═══════════════════════════════════════════════════════════════════
         clipped_bboxes = []
         clipped_labels = []
         
         for box, label in zip(bboxes_list, labels_list):
+            # Clip to image bounds
             clipped = clip_bbox_to_valid_range(box, h, w, min_size=2.0)
             
-            # Only keep valid boxes
-            if clipped[2] > clipped[0] + 1 and clipped[3] > clipped[1] + 1:
+            # STRICT VALIDATION: Must have positive width AND height
+            width = clipped[2] - clipped[0]
+            height = clipped[3] - clipped[1]
+            
+            if width > 1.0 and height > 1.0:  # Both must be > 1 pixel
                 clipped_bboxes.append(clipped)
                 clipped_labels.append(label)
+            else:
+                # Log filtered boxes for debugging
+                print(f"⚠️  Filtered box at image {idx}: {box} -> {clipped} (w={width:.1f}, h={height:.1f})")
         
-        # Fallback if all boxes were filtered
+        # ═══════════════════════════════════════════════════════════════════
+        # Handle case where all boxes were filtered
+        # ═══════════════════════════════════════════════════════════════════
         if not clipped_bboxes:
+            print(f"⚠️  All boxes filtered for image {idx}, returning empty")
             empty_aug = get_valid_transform()
             sample = empty_aug(image=image_resized, bboxes=[], labels=[])
             image_resized = sample['image']
@@ -569,10 +583,35 @@ class CustomDataset(Dataset):
             fallback = get_valid_transform()
             sample = fallback(image=image_resized, bboxes=clipped_bboxes, labels=clipped_labels)
         
-        # Update target with augmented data
-        image_resized = sample['image']
-        target['boxes'] = torch.as_tensor(sample['bboxes'], dtype=torch.float32) if sample['bboxes'] else torch.zeros((0, 4), dtype=torch.float32)
-        target['labels'] = torch.as_tensor(sample['labels'], dtype=torch.int64) if sample['labels'] else torch.zeros(0, dtype=torch.int64)
+        # ═══════════════════════════════════════════════════════════════════
+        # FINAL VALIDATION: Check augmented boxes again
+        # ═══════════════════════════════════════════════════════════════════
+        final_boxes = []
+        final_labels = []
+        
+        if sample['bboxes']:
+            for box, label in zip(sample['bboxes'], sample['labels']):
+                # Ensure no zero-width/height boxes after augmentation
+                width = box[2] - box[0]
+                height = box[3] - box[1]
+                
+                if width > 1.0 and height > 1.0:
+                    final_boxes.append(box)
+                    final_labels.append(label)
+                else:
+                    print(f"⚠️  Post-aug filtered box at image {idx}: {box} (w={width:.1f}, h={height:.1f})")
+        
+        # Update target with validated data
+        if final_boxes:
+            image_resized = sample['image']
+            target['boxes'] = torch.as_tensor(final_boxes, dtype=torch.float32)
+            target['labels'] = torch.as_tensor(final_labels, dtype=torch.int64)
+        else:
+            # All boxes filtered after augmentation
+            print(f"⚠️  All boxes filtered after augmentation for image {idx}")
+            image_resized = sample['image']
+            target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
+            target['labels'] = torch.zeros(0, dtype=torch.int64)
         
         return image_resized, target
     
