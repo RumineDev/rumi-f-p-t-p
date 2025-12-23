@@ -54,6 +54,12 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 RANK = int(os.getenv('RANK', -1))
 
+# Helper function for rank-based printing
+def print_rank0(*args, **kwargs):
+    """Print only from rank 0 in distributed training"""
+    if RANK in [-1, 0]:
+        print(*args, **kwargs)
+
 # For same annotation colors each time.
 np.random.seed(42)
 
