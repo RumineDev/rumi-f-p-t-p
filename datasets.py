@@ -30,8 +30,6 @@ from utils.transforms import (
 )
 from tqdm.auto import tqdm
 
-RANK = int(os.getenv('RANK', -1))
-
 class CustomDataset(Dataset):
     """
     Improved Custom Dataset for object detection
@@ -94,16 +92,14 @@ class CustomDataset(Dataset):
         self.all_images = sorted(self.all_images)
         
         # Collect labels per image for WeightedRandomSampler (class balancing)
-        if RANK in [-1, 0]:
-            print(f"Collecting image labels for class balancing...")
-            self.image_labels = self._collect_image_labels()
+        print(f"Collecting image labels for class balancing...")
+        self.image_labels = self._collect_image_labels()
         
         # Clean dataset (remove invalid images/annotations)
         if self.label_type == 'pascal_voc':
             self.read_and_clean()
         
-        if RANK in [-1, 0]:
-            print(f"Dataset initialized: {len(self.all_images)} images")
+        print(f"Dataset initialized: {len(self.all_images)} images")
     
     def _collect_image_labels(self):
         """
@@ -171,8 +167,7 @@ class CustomDataset(Dataset):
         - Images with invalid bboxes (negative, zero-width, out-of-bounds)
         - Images that can't be loaded
         """
-        if RANK in [-1, 0]:
-            print('Validating dataset...')
+        print('Validating dataset...')
         images_to_remove = []
         issues_found = []
         
@@ -488,10 +483,17 @@ class CustomDataset(Dataset):
             result_boxes[:, [0, 2]] = torch.clamp(result_boxes[:, [0, 2]], 0, 2 * s)
             result_boxes[:, [1, 3]] = torch.clamp(result_boxes[:, [1, 3]], 0, 2 * s)
             
-            # Filter valid boxes
-            valid = (result_boxes[:, 2] > result_boxes[:, 0] + 1) & (result_boxes[:, 3] > result_boxes[:, 1] + 1)
+            # Filter valid boxes with MINIMUM SIZE THRESHOLD
+            box_widths = result_boxes[:, 2] - result_boxes[:, 0]
+            box_heights = result_boxes[:, 3] - result_boxes[:, 1]
+            
+            # Require at least 10x10 pixels in mosaic space
+            min_size = 10
+            valid = (box_widths > min_size) & (box_heights > min_size)
+            
             result_boxes = result_boxes[valid]
             result_classes = [result_classes[i] for i in range(len(result_classes)) if valid[i]]
+        
         
         # Resize mosaic to target size
         result_image, resized_boxes = transform_mosaic(result_image, result_boxes.numpy() if len(result_boxes) > 0 else [], self.img_size)
@@ -578,8 +580,7 @@ class CustomDataset(Dataset):
             sample = aug(image=image_resized, bboxes=clipped_bboxes, labels=clipped_labels)
         except Exception as e:
             # Fallback to no augmentation on error
-            if RANK in [-1, 0]:  # Only print once in DDP
-                print(f"Warning: Augmentation failed for image {idx}: {e}")
+            print(f"Warning: Augmentation failed for image {idx}: {e}")
             fallback = get_valid_transform()
             sample = fallback(image=image_resized, bboxes=clipped_bboxes, labels=clipped_labels)
         
